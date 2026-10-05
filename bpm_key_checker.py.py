@@ -96,10 +96,15 @@ if st.button("解析開始", type="primary"):
             cookie_file.close()
             cookie_path = cookie_file.name
 
-          # --- フォーマット制限を無くし、最も汎用的な結合指定に変更 ---
+          # --- mweb クライアントを指定して「The page needs to be reloaded」を回避 ---
           ydl_opts = {
               "format": "bv*+ba/b",
               "outtmpl": os.path.join(temp_dir, "%(id)s.%(ext)s"),
+              "extractor_args": {
+                  "youtube": {
+                      "player_client": ["mweb"],
+                  }
+              },
               "postprocessors": [{
                   "key": "FFmpegExtractAudio",
                   "preferredcodec": "wav",
