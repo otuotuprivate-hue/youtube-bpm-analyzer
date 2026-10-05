@@ -1,4 +1,4 @@
 streamlit
 librosa
 numpy
-yt-dlp
+yt-dlp>=2024.03.10
