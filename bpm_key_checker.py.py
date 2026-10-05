@@ -73,9 +73,16 @@ if st.button("解析開始", type="primary"):
     with st.spinner("📥 音声をダウンロードして解析中..."):
       with tempfile.TemporaryDirectory() as temp_dir:
         try:
+          # ★★★ ここが yt-dlp オプション設定部分 (ydl_opts) です ★★★
           ydl_opts = {
               "format": "bestaudio/best",
               "outtmpl": os.path.join(temp_dir, "%(id)s.%(ext)s"),
+              "user_agent": (
+                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                  " AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0"
+                  " Safari/537.36"
+              ),
+              "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
               "postprocessors": [{
                   "key": "FFmpegExtractAudio",
                   "preferredcodec": "wav",
