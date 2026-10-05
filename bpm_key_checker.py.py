@@ -73,7 +73,21 @@ if st.button("解析開始", type="primary"):
     with st.spinner("📥 音声をダウンロードして解析中..."):
       with tempfile.TemporaryDirectory() as temp_dir:
         try:
-          # --- OAuth設定を削除し、安定したプレイヤー設定に変更 ---
+          cookie_path = None
+          # SecretsにCookieが設定されている場合は一時ファイルとして書き出す
+          if (
+              "youtube" in st.secrets
+              and "cookies" in st.secrets["youtube"]
+          ):
+            cookie_file = tempfile.NamedTemporaryFile(
+                delete=False, suffix=".txt"
+            )
+            cookie_file.write(
+                st.secrets["youtube"]["cookies"].encode("utf-8")
+            )
+            cookie_file.close()
+            cookie_path = cookie_file.name
+
           ydl_opts = {
               "format": "bestaudio/best",
               "outtmpl": os.path.join(temp_dir, "%(id)s.%(ext)s"),
@@ -91,11 +105,17 @@ if st.button("解析開始", type="primary"):
               "no_warnings": True,
           }
 
+          if cookie_path:
+            ydl_opts["cookiefile"] = cookie_path
+
           with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             file_id = info["id"]
             title = info.get("title", "Unknown Title")
             wav_path = os.path.join(temp_dir, f"{file_id}.wav")
+
+          if cookie_path and os.path.exists(cookie_path):
+            os.remove(cookie_path)
 
           y, sr = librosa.load(wav_path, sr=22050, duration=90)
 
