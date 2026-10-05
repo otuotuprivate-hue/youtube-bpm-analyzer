@@ -73,16 +73,13 @@ if st.button("解析開始", type="primary"):
     with st.spinner("📥 音声をダウンロードして解析中..."):
       with tempfile.TemporaryDirectory() as temp_dir:
         try:
-          # --- YouTubeのIPブロックを回避するOAuth2＆マルチクライアント設定 ---
+          # --- OAuth設定を削除し、安定したプレイヤー設定に変更 ---
           ydl_opts = {
               "format": "bestaudio/best",
               "outtmpl": os.path.join(temp_dir, "%(id)s.%(ext)s"),
-              "username": "oauth2",
-              "password": "",
               "extractor_args": {
                   "youtube": {
-                      "player_client": ["mweb", "android", "ios"],
-                      "player_skip": ["js"],
+                      "player_client": ["android", "web"],
                   }
               },
               "postprocessors": [{
