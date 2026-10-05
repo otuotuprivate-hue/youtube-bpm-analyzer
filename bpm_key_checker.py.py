@@ -6,7 +6,7 @@ import streamlit as st
 
 # --- ページ設定 ---
 st.set_page_config(
-    page_title="Audio BPM & Key Analyzer", page_icon="🎵", layout="centered"
+    page_title="taetae-bpm-analyzer", page_icon="🎵", layout="centered"
 )
 
 # --- キー判定アルゴリズム ---
@@ -60,9 +60,9 @@ def estimate_key(y, sr):
 
 
 # --- UI設計 ---
-st.title("🎵 Audio BPM & Key Analyzer")
+st.title("🎵 taetae-bpm-analyzer")
 st.write(
-    "音楽ファイルをアップロードすると、瞬時にBPMとKeyを解析します（高速化＆補正モード）。"
+    "音楽ファイルをアップロードすると、瞬時にBPMとKeyを高速解析します。"
 )
 
 uploaded_file = st.file_uploader(
@@ -80,7 +80,7 @@ if uploaded_file is not None:
           with open(audio_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
 
-          # 読み込み時間を45秒に短縮し、処理を劇的に軽量化
+          # 爆速化のための読み込み（最初の45秒）
           y, sr = librosa.load(audio_path, sr=22050, duration=45)
 
           # BPM解析
@@ -90,7 +90,7 @@ if uploaded_file is not None:
               if isinstance(tempo, np.ndarray)
               else float(tempo)
           )
-          double_bpm = bpm * 2  # 半分で検知された場合の倍テンポ候補
+          double_bpm = bpm * 2
 
           # Key解析
           key = estimate_key(y, sr)
@@ -115,10 +115,6 @@ if uploaded_file is not None:
                 "楽曲の構成やビートの刻み方（4つ打ちかハーフタイムかなど）によって、"
                 "解析エンジンが実際の半分または倍の値を返すことがあります。"
             )
-
-        except Exception as e:
-          st.error(f"解析エラーが発生しました:\n`{e}`")
-            st.metric(label="Key（調）", value=key)
 
         except Exception as e:
           st.error(f"解析エラーが発生しました:\n`{e}`")
