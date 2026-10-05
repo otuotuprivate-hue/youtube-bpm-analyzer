@@ -62,7 +62,7 @@ def estimate_key(y, sr):
 # --- UI設計 ---
 st.title("🎵 taetae-bpm-analyzer")
 st.write(
-    "音楽ファイルをアップロードすると、イントロ等を自動でスキップして高速解析します。"
+    "音楽ファイルをアップロードすると、セクション（展開）ごとにBPMとKeyを個別解析します。"
 )
 
 uploaded_file = st.file_uploader(
@@ -73,79 +73,111 @@ if uploaded_file is not None:
   st.audio(uploaded_file)
 
   if st.button("解析開始", type="primary"):
-    with st.spinner("⚡ 楽曲のメインパートを検出して解析中..."):
+    with st.spinner("🎼 楽曲のセクション（Aメロ・サビ等）を解析中..."):
       with tempfile.TemporaryDirectory() as temp_dir:
         try:
           audio_path = os.path.join(temp_dir, uploaded_file.name)
           with open(audio_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
 
-          # 全体を一旦読み込み（高速化のためサンプリングレートを下げておく）
+          # 全体を読み込み
           y, sr = librosa.load(audio_path, sr=22050)
+          total_duration = librosa.get_duration(y=y, sr=sr)
 
-          # --- イントロ自動スキップ処理 ---
-          # 音のエネルギー（振幅の二乗平均）を計算し、無音や静かなイントロの区間を避ける
-          # 曲全体が短い場合や、すぐに歌・リズムが始まる場合はそのまま対応
-          hop_length = 512
-          rms = librosa.feature.rms(y=y, frame_length=2048, hop_length=hop_length)[
-              0
-          ]
-
-          # 音量が一定以上の基準を超える最初のポイント（ビートが始まりそうな場所）を探す
-          # 全体の平均音量の一定割合を超えるフレームを最初の有効地点とする
-          if len(rms) > 0:
-            threshold = np.max(rms) * 0.15  # 最大音量の15%を基準にする
-            active_frames = np.where(rms > threshold)[0]
-            if len(active_frames) > 0:
-              start_frame = active_frames[0]
-              start_sample = frames_to_sample = librosa.frames_to_samples(
-                  start_frame, hop_length=hop_length
-              )
-              # もしイントロが長すぎる場合、最大でも曲全体の20%の位置までを上限にする
-              if start_sample > len(y) * 0.2:
-                start_sample = 0
-            else:
-              start_sample = 0
-          else:
-            start_sample = 0
-
-          # 切り出し（見つかった開始位置から45秒分、または最後まで）
-          duration_samples = sr * 45
-          y_trimmed = y[start_sample : start_sample + duration_samples]
-
-          # 万が一トリミング後のデータが短すぎる場合は元の先頭から使う
-          if len(y_trimmed) < sr * 10:
-            y_trimmed = y[: sr * 45]
-
-          # BPM解析
-          tempo, _ = librosa.beat.beat_track(y=y_trimmed, sr=sr)
-          bpm = (
-              float(tempo[0])
-              if isinstance(tempo, np.ndarray)
-              else float(tempo)
+          # 全体の代表値（全体サマリー用）
+          y_trimmed_full = y[: int(sr * min(total_duration, 60))]
+          tempo_full, _ = librosa.beat.beat_track(y=y_trimmed_full, sr=sr)
+          overall_bpm = (
+              float(tempo_full[0])
+              if isinstance(tempo_full, np.ndarray)
+              else float(tempo_full)
           )
-          double_bpm = bpm * 2
+          overall_key = estimate_key(y, sr)
 
-          # Key解析（こちらは全体を均したほうが正確な場合が多いので元データを使用）
-          key = estimate_key(y, sr)
-
-          # 結果表示
+          # 結果表示（サマリー）
           st.success("解析完了！")
           st.subheader(f"ファイル名: {uploaded_file.name}")
 
           col1, col2 = st.columns(2)
           with col1:
-            st.metric(label="検出BPM", value=f"{bpm:.1f}")
+            st.metric(label="全体平均 BPM", value=f"{overall_bpm:.1f}")
           with col2:
-            st.metric(label="Key（調）", value=key)
+            st.metric(label="全体代表 Key", value=overall_key)
 
-          with st.expander("💡 BPMの検知結果についての補足・確認"):
-            st.write(
-                f"- **倍テンポ（参考）**: `{double_bpm:.1f}`"
-                f"（もしテンポが半分で検知されている場合はこちらが実際のBPMの可能性があります）"
+          st.divider()
+          st.markdown("### 📊 セクション別（展開ごと）の詳細分析")
+          st.write(
+              "楽曲を一定のタイムライン（約15秒刻み）に分割し、それぞれの区間ごとのBPMとKeyの変化を追跡しています。"
+          )
+
+          # 15秒ごとのセクションに分割して個別に解析
+          chunk_duration = 15.0  . # 1セクションあたりの秒数
+          num_chunks = int(np.ceil(total_duration / chunk_duration))
+
+          # セクション名ラベルの推測（大体の目安）
+          section_labels = [
+              "イントロ / Aメロ前半",
+              "Aメロ後半 / Bメロ",
+              "Bメロ / サビ移行",
+              "サビ / メインパート",
+              "間奏 / Cメロ",
+              "落ちサビ / 大サビ",
+              "アウトロ / 終盤",
+          ]
+
+          for i in range(min(num_chunks, 7)):  # 最大7セクションまで表示
+            start_time = i * chunk_duration
+            end_time = min((i + 1) * chunk_duration, total_duration)
+
+            if start_time >= total_duration:
+              break
+
+            start_sample = int(start_time * sr)
+            end_sample = int(end_time * sr)
+            chunk_y = y[start_sample:end_sample]
+
+            if len(chunk_y) < sr * 2:  # 短すぎる断片はスキップ
+              continue
+
+            # このセクションのBPM
+            chunk_tempo, _ = librosa.beat.beat_track(y=chunk_y, sr=sr)
+            chunk_bpm = (
+                float(chunk_tempo[0])
+                if isinstance(chunk_tempo, np.ndarray)
+                else float(chunk_tempo)
             )
+
+            # このセクションのKey
+            chunk_key = estimate_key(chunk_y, sr)
+
+            # セクション名の決定
+            label = (
+                section_labels[i]
+                if i < len(section_labels)
+                else f"セクション {i+1}"
+            )
+
+            with st.container():
+              st.markdown(
+                  f"**📍 {label}** (`{start_time:.1f}秒 〜 {end_time:.1f}秒`)"
+              )
+              sc_col1, sc_col2 = st.columns(2)
+              with sc_col1:
+                st.metric(
+                    label="BPM",
+                    value=f"{chunk_bpm:.1f}",
+                    delta=f"{chunk_bpm - overall_bpm:.1f} (vs全体)"
+                    if chunk_bpm != overall_bpm
+                    else None,
+                )
+              with sc_col2:
+                st.metric(label="Key", value=chunk_key)
+              st.markdown("---")
+
+          with st.expander("💡 セクション解析についての解説"):
             st.caption(
-                "楽曲のイントロの静かな部分を自動でスキップし、ビートがしっかり鳴っているメイン部分を優先して解析しています。"
+                "楽曲内で転調（Keyの変更）やテンポの揺らぎ（ルバートや加速など）がある場合、"
+                "このように細かく区切ることでどのパートで変化したかを視覚的に確認できます。"
             )
 
         except Exception as e:
