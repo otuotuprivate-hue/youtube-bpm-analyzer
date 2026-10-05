@@ -1,5 +1,4 @@
 import os
-import re
 import tempfile
 import librosa
 import numpy as np
@@ -61,50 +60,29 @@ def estimate_key(y, sr):
   return best_key
 
 
-def clean_youtube_url(url):
-  url = re.sub(r"([&?]si=[^&]+)", "", url)
-  return url.strip()
-
-
 # --- UI設計 ---
 st.title("🎵 YouTube BPM & Key Analyzer")
 st.write("YouTube動画のURLを入力するだけで、BPMとKey（調）を自動解析します。")
 
-url_input = st.text_input(
-    "YouTube URL", placeholder="https://www.youtube.com/watch?v=..."
-)
+url = st.text_input("YouTube URL", placeholder="https://www.youtube.com/watch?v=...")
 
 if st.button("解析開始", type="primary"):
-  if not url_input:
+  if not url:
     st.warning("YouTubeのURLを入力してください。")
   else:
-    target_url = clean_youtube_url(url_input)
     with st.spinner("📥 音声をダウンロードして解析中..."):
       with tempfile.TemporaryDirectory() as temp_dir:
         try:
-          cookie_path = None
-          if (
-              "youtube" in st.secrets
-              and "cookies" in st.secrets["youtube"]
-          ):
-            cookie_file = tempfile.NamedTemporaryFile(
-                delete=False, suffix=".txt"
-            )
-            cookie_file.write(
-                st.secrets["youtube"]["cookies"].encode("utf-8")
-            )
-            cookie_file.close()
-            cookie_path = cookie_file.name
-
-          # --- mweb クライアントを指定して「The page needs to be reloaded」を回避 ---
+          # ★★★ ここが yt-dlp オプション設定部分 (ydl_opts) です ★★★
           ydl_opts = {
-              "format": "bv*+ba/b",
+              "format": "bestaudio/best",
               "outtmpl": os.path.join(temp_dir, "%(id)s.%(ext)s"),
-              "extractor_args": {
-                  "youtube": {
-                      "player_client": ["mweb"],
-                  }
-              },
+              "user_agent": (
+                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                  " AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0"
+                  " Safari/537.36"
+              ),
+              "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
               "postprocessors": [{
                   "key": "FFmpegExtractAudio",
                   "preferredcodec": "wav",
@@ -114,17 +92,11 @@ if st.button("解析開始", type="primary"):
               "no_warnings": True,
           }
 
-          if cookie_path:
-            ydl_opts["cookiefile"] = cookie_path
-
           with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(target_url, download=True)
+            info = ydl.extract_info(url, download=True)
             file_id = info["id"]
             title = info.get("title", "Unknown Title")
             wav_path = os.path.join(temp_dir, f"{file_id}.wav")
-
-          if cookie_path and os.path.exists(cookie_path):
-            os.remove(cookie_path)
 
           y, sr = librosa.load(wav_path, sr=22050, duration=90)
 
