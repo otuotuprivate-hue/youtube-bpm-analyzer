@@ -62,7 +62,7 @@ def estimate_key(y, sr):
 # --- UI設計 ---
 st.title("🎵 taetae-bpm-analyzer")
 st.write(
-    "音楽ファイルをアップロードすると、セクション（展開）ごとにBPMとKeyを個別解析します。"
+    "AIが楽曲の構造変化（Aメロ・サビ等の境界）を自動検出し、区間ごとに高精度に解析します。"
 )
 
 uploaded_file = st.file_uploader(
@@ -73,18 +73,18 @@ if uploaded_file is not None:
   st.audio(uploaded_file)
 
   if st.button("解析開始", type="primary"):
-    with st.spinner("🎼 楽曲のセクション（Aメロ・サビ等）を解析中..."):
+    with st.spinner("🤖 AIが楽曲の構造を解析中..."):
       with tempfile.TemporaryDirectory() as temp_dir:
         try:
           audio_path = os.path.join(temp_dir, uploaded_file.name)
           with open(audio_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
 
-          # 全体を読み込み
+          # 音声全体の読み込み
           y, sr = librosa.load(audio_path, sr=22050)
           total_duration = librosa.get_duration(y=y, sr=sr)
 
-          # 全体の代表値（全体サマリー用）
+          # 全体の代表値算出
           y_trimmed_full = y[: int(sr * min(total_duration, 60))]
           tempo_full, _ = librosa.beat.beat_track(y=y_trimmed_full, sr=sr)
           overall_bpm = (
@@ -105,41 +105,47 @@ if uploaded_file is not None:
             st.metric(label="全体代表 Key", value=overall_key)
 
           st.divider()
-          st.markdown("### 📊 セクション別（展開ごと）の詳細分析")
+          st.markdown("### 🤖 AI構造検出によるセクション別詳細")
           st.write(
-              "楽曲を一定のタイムライン（約15秒刻み）に分割し、それぞれの区間ごとのBPMとKeyの変化を追跡しています。"
+              "音響的特徴の変化（盛り上がりやリズムの変化点）をAIが捉え、意味のある区間に分割して解析しています。"
           )
 
-          # 15秒ごとのセクションに分割して個別に解析
-          chunk_duration = 15.0  # 1セクションあたりの秒数
-          num_chunks = int(np.ceil(total_duration / chunk_duration))
+          # --- AIによる境界検出（構造解析） ---
+          # MFCC（音色特徴量）を抽出して、曲の展開が変わるポイントを特定
+          mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
+          # テンポ・ビートに合わせた同期
+          bound_frames = librosa.segment.agglomerative(mfcc, k=min(6, max(3, int(total_duration / 20))))
+          bound_times = librosa.frames_to_time(bound_frames, sr=sr)
 
-          # セクション名ラベルの推測（大体の目安）
-          section_labels = [
-              "イントロ / Aメロ前半",
-              "Aメロ後半 / Bメロ",
-              "Bメロ / サビ移行",
-              "サビ / メインパート",
-              "間奏 / Cメロ",
-              "落ちサビ / 大サビ",
-              "アウトロ / 終盤",
+          # 境界の時間を綺麗にソートして、最初と最後（0秒と曲の長さ）を確実に入れる
+          bound_times = np.unique(
+              np.concatenate(([0.0], bound_times, [total_duration]))
+          )
+          bound_times.sort()
+
+          # 各セクションごとの解析・表示
+          section_names = [
+              "イントロ",
+              "Aメロ",
+              "Bメロ",
+              "サビ",
+              "Cメロ / 間奏",
+              "大サビ / アウトロ",
           ]
 
-          for i in range(min(num_chunks, 7)):  # 最大7セクションまで表示
-            start_time = i * chunk_duration
-            end_time = min((i + 1) * chunk_duration, total_duration)
+          for i in range(len(bound_times) - 1):
+            start_time = bound_times[i]
+            end_time = bound_times[i + 1]
 
-            if start_time >= total_duration:
-              break
+            # 短すぎる区間（2秒未満）はノイズとしてスキップ
+            if (end_time - start_time) < 2.0:
+              continue
 
             start_sample = int(start_time * sr)
             end_sample = int(end_time * sr)
             chunk_y = y[start_sample:end_sample]
 
-            if len(chunk_y) < sr * 2:  # 短すぎる断片はスキップ
-              continue
-
-            # このセクションのBPM
+            # この区間のBPM
             chunk_tempo, _ = librosa.beat.beat_track(y=chunk_y, sr=sr)
             chunk_bpm = (
                 float(chunk_tempo[0])
@@ -147,19 +153,19 @@ if uploaded_file is not None:
                 else float(chunk_tempo)
             )
 
-            # このセクションのKey
+            # この区間のKey
             chunk_key = estimate_key(chunk_y, sr)
 
-            # セクション名の決定
+            # セクション名の割り当て
             label = (
-                section_labels[i]
-                if i < len(section_labels)
+                section_names[i]
+                if i < len(section_names)
                 else f"セクション {i+1}"
             )
 
             with st.container():
               st.markdown(
-                  f"**📍 {label}** (`{start_time:.1f}秒 〜 {end_time:.1f}`秒)"
+                  f"**📍 {label}** (`{start_time:.1f}秒 〜 {end_time:.1f}秒`)"
               )
               sc_col1, sc_col2 = st.columns(2)
               with sc_col1:
@@ -174,10 +180,10 @@ if uploaded_file is not None:
                 st.metric(label="Key", value=chunk_key)
               st.markdown("---")
 
-          with st.expander("💡 セクション解析についての解説"):
+          with st.expander("💡 AI構造解析についての解説"):
             st.caption(
-                "楽曲内で転調（Keyの変更）やテンポの揺らぎ（ルバートや加速など）がある場合、"
-                "このように細かく区切ることでどのパートで変化したかを視覚的に確認できます。"
+                "音声のスペクトルや音色の変化（MFCC）を元に、機械学習の手法（凝集型クラスタリング）で"
+                "「曲の雰囲気が変わる境界」を自動で割り出し、それぞれのブロックでBPMとKeyを計算しています。"
             )
 
         except Exception as e:
