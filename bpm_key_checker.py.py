@@ -150,7 +150,3 @@ if uploaded_file is not None:
 
         except Exception as e:
           st.error(f"解析エラーが発生しました:\n`{e}`")
-            )
-
-        except Exception as e:
-          st.error(f"解析エラーが発生しました:\n`{e}`")
