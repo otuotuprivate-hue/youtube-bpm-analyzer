@@ -59,35 +59,63 @@ def estimate_key(y, sr):
   return best_key
 
 
-def analyze_bpm_high_precision(y, sr):
-  """高精度なBPM算出ロジック（パーカッシブ成分の強調とパルス解析）"""
-  # 1. 楽器の打撃音（パーカッシブ成分：ドラムやリズム隊）を分離して強調
-  y_harmonic, y_percussive = librosa.effects.hpss(y)
+def estimate_bpm_from_drums(y, sr):
+  """ドラムの打点（アタック音）の間隔を直接解析してBPMを算出する"""
+  # 1. 楽器の音をハーモニック（メロディ・コード）とパーカッシブ（ドラム・リズム）に完全に分離
+  _, y_percussive = librosa.effects.hpss(y, margin=3.0)
 
-  # 2. 高精度なオンセット強度（アタックの強弱）を計算
-  onset_env = librosa.onset.onset_strength(y=y_percussive, sr=sr, aggregate=np.median)
-
-  # 3. パルスラディアルプロファイル（PLP）を用いて人間のノリに近いテンポを算出
-  # 範囲を通常のポップス・アイドルソングに特化（70〜200 BPM）
-  tempo = librosa.feature.tempo(
-      onset_envelope=onset_env, sr=sr, aggregate=np.median, prior=None
+  # 2. ドラムの打撃音の強弱を表すオンセットエンベロープを生成
+  onset_env = librosa.onset.onset_strength(
+      y=y_percussive, sr=sr, hop_length=256, aggregate=np.sum
   )
 
-  bpm = float(tempo[0]) if isinstance(tempo, np.ndarray) else float(tempo)
+  # 3. ドラムの「アタック（打点）」の正確な位置（フレーム）を検出
+  peak_frames = librosa.util.peak_pick(
+      onset_env,
+      pre_max=3,
+      post_max=3,
+      pre_avg=3,
+      post_avg=5,
+      delta=0.2,
+      wait=10,
+  )
+  peak_times = librosa.frames_to_time(peak_frames, sr=sr, hop_length=256)
 
-  # 万が一極端な数値が出た場合のフォールバック補正
-  if bpm < 75:
-    bpm *= 2
-  elif bpm > 190:
-    bpm /= 2
+  # 4. 打点と打点の間隔（デルタ時間）を計算
+  if len(peak_times) < 5:
+    # 打点が少なすぎる場合は通常のビートトラッキングにフォールバック
+    tempo, _ = librosa.beat.beat_track(y=y_percussive, sr=sr)
+    return float(tempo[0]) if isinstance(tempo, np.ndarray) else float(tempo)
 
-  return bpm
+  intervals = np.diff(peak_times)
+
+  # 異常値（短すぎる連打や長すぎる空白）を除外
+  intervals = intervals[(intervals > 0.2) & (intervals < 1.5)]  # BPM 40〜300相当
+
+  if len(intervals) == 0:
+    return 120.0
+
+  # 間隔のヒストグラムや中央値から最も支配的なテンポ（秒間隔）を割り出す
+  # 4分音符間隔に最も近いものを探す
+  median_interval = np.median(intervals)
+
+  # リズムの刻み方（8分音符や16分音符で拾っている場合の補正）
+  # テンポが極端に速く／遅くならないよう現実的な範囲（70〜180）に収める
+  calculated_bpm = 60.0 / median_interval
+
+  # アイドルソング等でよくある倍・半分の誤認を防ぐためのレンジ調整
+  while calculated_bpm < 75:
+    calculated_bpm *= 2
+  while calculated_bpm > 185:
+    calculated_bpm /= 2
+
+  return float(calculated_bpm)
 
 
 # --- UI設計 ---
 st.title("🎵 taetae-bpm-analyzer")
 st.write(
-    "高精度リズム解析モード：楽曲のパーカッシブ成分を抽出し、区間ごとに正確にBPMとKeyを解析します。"
+    "【ドラム打点直読モード】楽曲のドラム・リズム隊の打撃音をダイレクトに解析します。"
 )
 
 uploaded_file = st.file_uploader(
@@ -98,44 +126,38 @@ if uploaded_file is not None:
   st.audio(uploaded_file)
 
   if st.button("解析開始", type="primary"):
-    with st.spinner("🎛️ 高精度アルゴリズムで楽曲構造を解析中..."):
+    with st.spinner("🥁 ドラムの打点（ビート）を解析中..."):
       with tempfile.TemporaryDirectory() as temp_dir:
         try:
           audio_path = os.path.join(temp_dir, uploaded_file.name)
           with open(audio_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
 
-          # 全体を読み込み
           y, sr = librosa.load(audio_path, sr=22050)
           total_duration = librosa.get_duration(y=y, sr=sr)
 
-          # 全体の高精度代表値
-          overall_bpm = analyze_bpm_high_precision(y, sr)
+          # 全体のドラム解析によるBPM
+          overall_bpm = estimate_bpm_from_drums(y, sr)
           overall_key = estimate_key(y, sr)
 
-          # 結果表示（サマリー）
           st.success("解析完了！")
           st.subheader(f"ファイル名: {uploaded_file.name}")
 
           col1, col2 = st.columns(2)
           with col1:
-            st.metric(label="全体高精度 BPM", value=f"{overall_bpm:.1f}")
+            st.metric(label="検出BPM（ドラム直読）", value=f"{overall_bpm:.1f}")
           with col2:
-            st.metric(label="全体代表 Key", value=overall_key)
+            st.metric(label="Key（調）", value=overall_key)
 
           st.divider()
-          st.markdown("### 🎼 AI構造解析によるセクション別詳細")
-          st.write(
-              "音色の変化点（MFCC）を元にセクションを分割し、それぞれの区間でリズム成分を分離して高精度に計測しています。"
-          )
+          st.markdown("### 🎼 セクション別ドラム解析")
 
-          # --- AIによる境界検出 ---
+          # AIによる境界検出
           mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
           bound_frames = librosa.segment.agglomerative(
               mfcc, k=min(6, max(3, int(total_duration / 25)))
           )
           bound_times = librosa.frames_to_time(bound_frames, sr=sr)
-
           bound_times = np.unique(
               np.concatenate(([0.0], bound_times, [total_duration]))
           )
@@ -161,8 +183,7 @@ if uploaded_file is not None:
             end_sample = int(end_time * sr)
             chunk_y = y[start_sample:end_sample]
 
-            # セクションごとの高精度BPMとKey
-            chunk_bpm = analyze_bpm_high_precision(chunk_y, sr)
+            chunk_bpm = estimate_bpm_from_drums(chunk_y, sr)
             chunk_key = estimate_key(chunk_y, sr)
 
             label = (
@@ -177,22 +198,13 @@ if uploaded_file is not None:
               )
               sc_col1, sc_col2 = st.columns(2)
               with sc_col1:
-                st.metric(
-                    label="BPM",
-                    value=f"{chunk_bpm:.1f}",
-                    delta=f"{chunk_bpm - overall_bpm:.1f} (vs全体)"
-                    if abs(chunk_bpm - overall_bpm) > 0.5
-                    else None,
-                )
+                st.metric(label="BPM", value=f"{chunk_bpm:.1f}")
               with sc_col2:
                 st.metric(label="Key", value=chunk_key)
               st.markdown("---")
 
-          with st.expander("💡 高精度解析についての解説"):
-            st.caption(
-                "ボーカルやメロディ（ハーモニック成分）の影響を排除し、"
-                "ドラムやベースなどの打撃音（パーカッシブ成分）の周期を重点的に解析することで、"
-                "手数の多いアイドルソングや高速な楽曲でもズレにくい設計にしています。"
+        except Exception as e:
+          st.error(f"解析エラーが発生しました:\n`{e}`")
             )
 
         except Exception as e:
