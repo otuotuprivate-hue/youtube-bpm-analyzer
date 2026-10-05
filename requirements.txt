@@ -1,4 +1,4 @@
 streamlit
 librosa
 numpy
-yt-dlp>=2024.03.10
+https://github.com/yt-dlp/yt-dlp/archive/master.tar.gz
