@@ -88,12 +88,13 @@ if st.button("解析開始", type="primary"):
             cookie_file.close()
             cookie_path = cookie_file.name
 
+          # --- 安定性を高めたフォーマットおよびクライアント設定 ---
           ydl_opts = {
               "format": "bestaudio/best",
               "outtmpl": os.path.join(temp_dir, "%(id)s.%(ext)s"),
               "extractor_args": {
                   "youtube": {
-                      "player_client": ["android", "web"],
+                      "player_client": ["web", "mweb"],
                   }
               },
               "postprocessors": [{
