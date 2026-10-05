@@ -1,14 +1,12 @@
 import os
-import re
 import tempfile
 import librosa
 import numpy as np
-import requests
 import streamlit as st
 
 # --- ページ設定 ---
 st.set_page_config(
-    page_title="YouTube BPM & Key Analyzer", page_icon="🎵", layout="centered"
+    page_title="Audio BPM & Key Analyzer", page_icon="🎵", layout="centered"
 )
 
 # --- キー判定アルゴリズム ---
@@ -61,104 +59,52 @@ def estimate_key(y, sr):
   return best_key
 
 
-def clean_youtube_url(url):
-  url = re.sub(r"([&?]si=[^&]+)", "", url)
-  url = re.sub(r"([&?]feature=[^&]+)", "", url)
-  return url.strip()
-
-
 # --- UI設計 ---
-st.title("🎵 YouTube BPM & Key Analyzer")
+st.title("🎵 Audio BPM & Key Analyzer")
 st.write(
-    "YouTube動画のURLを入力するだけで、BPMとKey（調）を自動解析します（API中継モード）。"
+    "音楽ファイル（mp3 / wav / m4a 等）をアップロードするだけで、BPMとKey（調）を自動解析します。"
 )
 
-url_input = st.text_input(
-    "YouTube URL", placeholder="https://www.youtube.com/watch?v=..."
+uploaded_file = st.file_uploader(
+    "音楽ファイルをアップロード", type=["mp3", "wav", "m4a", "flac", "ogg"]
 )
 
-if st.button("解析開始", type="primary"):
-  if not url_input:
-    st.warning("YouTubeのURLを入力してください。")
-  else:
-    target_url = clean_youtube_url(url_input)
-    with st.spinner("🔄 外部API中継経由で音声を取得して解析中..."):
+if uploaded_file is not None:
+  # 音声プレイヤーの表示
+  st.audio(uploaded_file)
+
+  if st.button("解析開始", type="primary"):
+    with st.spinner("🔄 音声を解析中..."):
       with tempfile.TemporaryDirectory() as temp_dir:
         try:
-          # パブリックな音声抽出API（Cobalt等のオープンAPI互換エンドポイント）へリクエスト
-          # クライアント側のIPではなくAPIサーバー側で処理されるためYouTubeのブロックを回避可能
-          api_url = "https://co.wuk.sh/api/json"
-          headers = {
-              "Accept": "application/json",
-              "Content-Type": "application/json",
-          }
-          payload = {
-              "url": target_url,
-              "downloadMode": "audio",
-              "audioFormat": "mp3",
-          }
+          # アップロードされたファイルを一時保存
+          audio_path = os.path.join(temp_dir, uploaded_file.name)
+          with open(audio_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
 
-          response = requests.post(
-              api_url, json=payload, headers=headers, timeout=30
+          # librosaで読み込み（最初の90秒間を対象に高速解析）
+          y, sr = librosa.load(audio_path, sr=22050, duration=90)
+
+          # BPM解析
+          tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
+          bpm = (
+              float(tempo[0])
+              if isinstance(tempo, np.ndarray)
+              else float(tempo)
           )
-          res_data = response.json()
 
-          if res_data.get("status") in ["stream", "redirect", "picker"]:
-            audio_download_url = res_data.get("url")
-            title = res_data.get("filename", "Unknown Title")
+          # Key解析
+          key = estimate_key(y, sr)
 
-            if not audio_download_url:
-              # ピッカーなどの複数候補がある場合のフォールバック
-              if (
-                  "picker" in res_data
-                  and len(res_data["picker"]) > 0
-              ):
-                audio_download_url = res_data["picker"][0].get("url")
+          # 結果表示
+          st.success("解析が完了しました！")
+          st.subheader(f"ファイル名: {uploaded_file.name}")
 
-            if not audio_download_url:
-              raise Exception(
-                  "音声のダウンロードリンクを取得できませんでした。"
-              )
-
-            # 実際の音声ファイルを一時ディレクトリにダウンロード
-            audio_res = requests.get(
-                audio_download_url, stream=True, timeout=60
-            )
-            audio_path = os.path.join(temp_dir, "downloaded_audio.mp3")
-            with open(audio_path, "wb") as f:
-              for chunk in audio_res.iter_content(chunk_size=8192):
-                if chunk:
-                  f.write(chunk)
-
-            # librosaで読み込み（最初の90秒間を対象に高速解析）
-            y, sr = librosa.load(audio_path, sr=22050, duration=90)
-
-            # BPM解析
-            tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-            bpm = (
-                float(tempo[0])
-                if isinstance(tempo, np.ndarray)
-                else float(tempo)
-            )
-
-            # Key解析
-            key = estimate_key(y, sr)
-
-            # 結果表示
-            st.success("解析が完了しました！")
-            st.subheader(f"曲名: {title}")
-
-            col1, col2 = st.columns(2)
-            with col1:
-              st.metric(label="BPM（テンポ）", value=f"{bpm:.1f}")
-            with col2:
-              st.metric(label="Key（調）", value=key)
-
-          else:
-            err_msg = res_data.get(
-                "text", "APIからのレスポンスが無効です。"
-            )
-            raise Exception(f"APIエラー: {err_msg}")
+          col1, col2 = st.columns(2)
+          with col1:
+            st.metric(label="BPM（テンポ）", value=f"{bpm:.1f}")
+          with col2:
+            st.metric(label="Key（調）", value=key)
 
         except Exception as e:
-          st.error(f"エラーが発生しました:\n`{e}`")
+          st.error(f"解析エラーが発生しました:\n`{e}`")
