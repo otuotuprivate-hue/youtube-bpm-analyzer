@@ -62,7 +62,7 @@ def estimate_key(y, sr):
 
 
 def clean_youtube_url(url):
-  # トラッキングパラメータや余分な文字を徹底的に掃除
+  # トラッキングパラメータや余分なクエリを完璧に除去
   url = re.sub(r"([&?]si=[^&]+)", "", url)
   url = re.sub(r"([&?]feature=[^&]+)", "", url)
   return url.strip()
@@ -71,7 +71,7 @@ def clean_youtube_url(url):
 # --- UI設計 ---
 st.title("🎵 YouTube BPM & Key Analyzer")
 st.write(
-    "YouTube動画のURLを入力するだけで、BPMとKey（調）を自動解析します（クラウド防衛モード）。"
+    "YouTube動画のURLを入力するだけで、BPMとKey（調）を自動解析します（極限突破モード）。"
 )
 
 url_input = st.text_input(
@@ -83,13 +83,11 @@ if st.button("解析開始", type="primary"):
     st.warning("YouTubeのURLを入力してください。")
   else:
     target_url = clean_youtube_url(url_input)
-    with st.spinner(
-        "📥 クラウド防衛バイパスを適用して音声をダウンロード中..."
-    ):
+    with st.spinner("🚀 極限突破バイパスで音声を解析中..."):
       with tempfile.TemporaryDirectory() as temp_dir:
         cookie_path = None
         try:
-          # SecretsからCookieを安全に一時ファイルへ展開
+          # SecretsからCookieを一時ファイルへ書き出し
           if (
               "youtube" in st.secrets
               and "cookies" in st.secrets["youtube"]
@@ -101,17 +99,14 @@ if st.button("解析開始", type="primary"):
             cookie_file.close()
             cookie_path = cookie_file.name
 
-          # --- 限界突破を狙うyt-dlpオプション ---
+          # --- 最強のバイパスオプション群 ---
           ydl_opts = {
-              "format": "ba[ext=m4a]/ba/b",  # 音声専用のm4aまたはベストフォーマットを優先指定
+              "format": "bestaudio/best",
               "outtmpl": os.path.join(temp_dir, "%(id)s.%(ext)s"),
               "extractor_args": {
                   "youtube": {
-                      "player_client": [
-                          "android",
-                          "web",
-                      ],  # 複数のプレイヤーをフォールバックさせる
-                      "skip": ["dash", "hls"],
+                      # ブロックされにくい android_vr と ios クライアントを強制網羅
+                      "player_client": ["android_vr", "ios", "web"],
                   }
               },
               "geo_bypass": True,
@@ -122,8 +117,8 @@ if st.button("解析開始", type="primary"):
                   "preferredcodec": "wav",
                   "preferredquality": "192",
               }],
-              "quiet": False,  # エラー詳細を捕捉するため一時的にFalse
-              "no_warnings": False,
+              "quiet": True,
+              "no_warnings": True,
           }
 
           if cookie_path and os.path.exists(cookie_path):
@@ -135,16 +130,15 @@ if st.button("解析開始", type="primary"):
             title = info.get("title", "Unknown Title")
             wav_path = os.path.join(temp_dir, f"{file_id}.wav")
 
-          # 念のため音声ファイルの存在確認
+          # 万が一ファイル名が異なる場合のフォールバック
           if not os.path.exists(wav_path):
-            # 拡張子が違う場合のフォールバック検索
             files = os.listdir(temp_dir)
             wav_files = [os.path.join(temp_dir, f) for f in files if f.endswith(".wav")]
             if wav_files:
               wav_path = wav_files[0]
             else:
               raise FileNotFoundError(
-                  "音声ファイルの変換・抽出に失敗しました。"
+                  "音声ファイルの抽出・変換に失敗しました。"
               )
 
           y, sr = librosa.load(wav_path, sr=22050, duration=90)
@@ -171,12 +165,11 @@ if st.button("解析開始", type="primary"):
             st.metric(label="Key（調）", value=key)
 
         except Exception as e:
-          st.error(f"解析エラーが発生しました:\n`{e}`")
+          st.error(f"エラーが発生しました:\n`{e}`")
           st.info(
-              "💡 ヒント: クラウド環境のIPがYouTubeに強くブロックされている可能性があります。Streamlitのダッシュボードから「Clear cache and reboot」をお試しください。"
+              "💡 もしまだ弾かれる場合は、Streamlitダッシュボードのメニューから「Clear cache and reboot」を実行してから再度お試しください。"
           )
         finally:
-          # クッキーの一時ファイルを確実に消去
           if cookie_path and os.path.exists(cookie_path):
             try:
               os.remove(cookie_path)
