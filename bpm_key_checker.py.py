@@ -1,4 +1,5 @@
 import os
+import re
 import tempfile
 import librosa
 import numpy as np
@@ -60,21 +61,29 @@ def estimate_key(y, sr):
   return best_key
 
 
+def clean_youtube_url(url):
+  # 余分なトラッキングパラメータ(?si=など)を削除して綺麗なURLにする
+  url = re.sub(r"([&?]si=[^&]+)", "", url)
+  return url.strip()
+
+
 # --- UI設計 ---
 st.title("🎵 YouTube BPM & Key Analyzer")
 st.write("YouTube動画のURLを入力するだけで、BPMとKey（調）を自動解析します。")
 
-url = st.text_input("YouTube URL", placeholder="https://www.youtube.com/watch?v=...")
+url_input = st.text_input(
+    "YouTube URL", placeholder="https://www.youtube.com/watch?v=..."
+)
 
 if st.button("解析開始", type="primary"):
-  if not url:
+  if not url_input:
     st.warning("YouTubeのURLを入力してください。")
   else:
+    target_url = clean_youtube_url(url_input)
     with st.spinner("📥 音声をダウンロードして解析中..."):
       with tempfile.TemporaryDirectory() as temp_dir:
         try:
           cookie_path = None
-          # SecretsにCookieが設定されている場合は一時ファイルとして書き出す
           if (
               "youtube" in st.secrets
               and "cookies" in st.secrets["youtube"]
@@ -88,13 +97,13 @@ if st.button("解析開始", type="primary"):
             cookie_file.close()
             cookie_path = cookie_file.name
 
-          # --- 安定性を高めたフォーマットおよびクライアント設定 ---
+          # iOSクライアントを指定することでフォーマット制限の回避を試みる
           ydl_opts = {
               "format": "bestaudio/best",
               "outtmpl": os.path.join(temp_dir, "%(id)s.%(ext)s"),
               "extractor_args": {
                   "youtube": {
-                      "player_client": ["web", "mweb"],
+                      "player_client": ["ios"],
                   }
               },
               "postprocessors": [{
@@ -110,7 +119,7 @@ if st.button("解析開始", type="primary"):
             ydl_opts["cookiefile"] = cookie_path
 
           with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
+            info = ydl.extract_info(target_url, download=True)
             file_id = info["id"]
             title = info.get("title", "Unknown Title")
             wav_path = os.path.join(temp_dir, f"{file_id}.wav")
