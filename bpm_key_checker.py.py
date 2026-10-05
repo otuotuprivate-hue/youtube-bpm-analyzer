@@ -111,7 +111,7 @@ if uploaded_file is not None:
           )
 
           # 15秒ごとのセクションに分割して個別に解析
-          chunk_duration = 15.0  . # 1セクションあたりの秒数
+          chunk_duration = 15.0  # 1セクションあたりの秒数
           num_chunks = int(np.ceil(total_duration / chunk_duration))
 
           # セクション名ラベルの推測（大体の目安）
@@ -159,7 +159,7 @@ if uploaded_file is not None:
 
             with st.container():
               st.markdown(
-                  f"**📍 {label}** (`{start_time:.1f}秒 〜 {end_time:.1f}秒`)"
+                  f"**📍 {label}** (`{start_time:.1f}秒 〜 {end_time:.1f}`秒)"
               )
               sc_col1, sc_col2 = st.columns(2)
               with sc_col1:
