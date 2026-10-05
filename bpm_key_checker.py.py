@@ -9,7 +9,7 @@ st.set_page_config(
     page_title="taetae-bpm-analyzer", page_icon="🎵", layout="centered"
 )
 
-# --- キー判定アルゴリズム ---
+# --- キー判定アルゴリズム（Krumhansl-Schmuckler プロファイル） ---
 MAJOR_PROFILE = np.array(
     [6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88]
 )
@@ -33,7 +33,9 @@ NOTE_NAMES = [
 
 
 def estimate_key(y, sr):
-    chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
+    """楽曲全体のコード感（クロマ特徴量）からKeyを高精度に判定する"""
+    # CQTベースのクロマ特徴量を抽出
+    chroma = librosa.feature.chroma_cqt(y=y, sr=sr, hop_length=512)
     chroma_sum = np.sum(chroma, axis=1)
     if np.sum(chroma_sum) > 0:
         chroma_sum = chroma_sum / np.sum(chroma_sum)
@@ -59,50 +61,33 @@ def estimate_key(y, sr):
     return best_key
 
 
-def estimate_bpm_from_drums(y, sr):
-    """ドラムの打点（アタック音）の間隔を直接解析してBPMを算出する"""
-    _, y_percussive = librosa.effects.hpss(y, margin=3.0)
+def estimate_overall_bpm(y, sr):
+    """ドラム・リズム成分を分離して全体の正確なBPMを算出する"""
+    # 楽器音をハーモニック（メロディ）とパーカッシブ（リズム）に分離
+    _, y_percussive = librosa.effects.hpss(y, margin=2.0)
 
-    onset_env = librosa.onset.onset_strength(
-        y=y_percussive, sr=sr, hop_length=256, aggregate=np.sum
-    )
+    # ビートトラッキングを実行
+    tempo, _ = librosa.beat.beat_track(y=y_percussive, sr=sr)
 
-    peak_frames = librosa.util.peak_pick(
-        onset_env,
-        pre_max=3,
-        post_max=3,
-        pre_avg=3,
-        post_avg=5,
-        delta=0.2,
-        wait=10,
-    )
-    peak_times = librosa.frames_to_time(peak_frames, sr=sr, hop_length=256)
+    # テンポの形式をスカラー値に変換
+    if isinstance(tempo, np.ndarray):
+        bpm = float(tempo[0]) if len(tempo) > 0 else 120.0
+    else:
+        bpm = float(tempo)
 
-    if len(peak_times) < 5:
-        tempo, _ = librosa.beat.beat_track(y=y_percussive, sr=sr)
-        return float(tempo[0]) if isinstance(tempo, np.ndarray) else float(tempo)
+    # アイドルソング等でありがちな半テンポ・倍テンポの補正（75〜185の範囲に収める）
+    while bpm < 75:
+        bpm *= 2
+    while bpm > 185:
+        bpm /= 2
 
-    intervals = np.diff(peak_times)
-    intervals = intervals[(intervals > 0.2) & (intervals < 1.5)]
-
-    if len(intervals) == 0:
-        return 120.0
-
-    median_interval = np.median(intervals)
-    calculated_bpm = 60.0 / median_interval
-
-    while calculated_bpm < 75:
-        calculated_bpm *= 2
-    while calculated_bpm > 185:
-        calculated_bpm /= 2
-
-    return float(calculated_bpm)
+    return round(bpm, 1)
 
 
 # --- UI設計 ---
 st.title("🎵 taetae-bpm-analyzer")
 st.write(
-    "【ドラム打点直読モード】楽曲のドラム・リズム隊の打撃音をダイレクトに解析します。"
+    "音楽ファイルをアップロードすると、曲全体の正確なBPMとKeyをシンプルに解析します。"
 )
 
 uploaded_file = st.file_uploader(
@@ -113,80 +98,43 @@ if uploaded_file is not None:
     st.audio(uploaded_file)
 
     if st.button("解析開始", type="primary"):
-        with st.spinner("🥁 ドラムの打点（ビート）を解析中..."):
+        with st.spinner("🎧 曲全体を高精度解析中..."):
             with tempfile.TemporaryDirectory() as temp_dir:
                 try:
                     audio_path = os.path.join(temp_dir, uploaded_file.name)
                     with open(audio_path, "wb") as f:
                         f.write(uploaded_file.getbuffer())
 
+                    # 音声全体をロード
                     y, sr = librosa.load(audio_path, sr=22050)
-                    total_duration = librosa.get_duration(y=y, sr=sr)
 
-                    overall_bpm = estimate_bpm_from_drums(y, sr)
-                    overall_key = estimate_key(y, sr)
+                    # 全体のBPMとKeyを算出
+                    bpm = estimate_overall_bpm(y, sr)
+                    key = estimate_key(y, sr)
+                    double_bpm = round(bpm * 2, 1)
+                    half_bpm = round(bpm / 2, 1)
 
+                    # 結果表示
                     st.success("解析完了！")
                     st.subheader(f"ファイル名: {uploaded_file.name}")
 
                     col1, col2 = st.columns(2)
                     with col1:
-                        st.metric(label="検出BPM（ドラム直読）", value=f"{overall_bpm:.1f}")
+                        st.metric(label="検出 BPM", value=f"{bpm:.1f}")
                     with col2:
-                        st.metric(label="Key（調）", value=overall_key)
+                        st.metric(label="検出 Key", value=key)
 
-                    st.divider()
-                    st.markdown("### 🎼 セクション別ドラム解析")
-
-                    mfcc = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
-                    bound_frames = librosa.segment.agglomerative(
-                        mfcc, k=min(6, max(3, int(total_duration / 25)))
-                    )
-                    bound_times = librosa.frames_to_time(bound_frames, sr=sr)
-                    bound_times = np.unique(
-                        np.concatenate(([0.0], bound_times, [total_duration]))
-                    )
-                    bound_times.sort()
-
-                    section_names = [
-                        "イントロ",
-                        "Aメロ",
-                        "Bメロ",
-                        "サビ",
-                        "Cメロ / 間奏",
-                        "大サビ / アウトロ",
-                    ]
-
-                    for i in range(len(bound_times) - 1):
-                        start_time = bound_times[i]
-                        end_time = bound_times[i + 1]
-
-                        if (end_time - start_time) < 3.0:
-                            continue
-
-                        start_sample = int(start_time * sr)
-                        end_sample = int(end_time * sr)
-                        chunk_y = y[start_sample:end_sample]
-
-                        chunk_bpm = estimate_bpm_from_drums(chunk_y, sr)
-                        chunk_key = estimate_key(chunk_y, sr)
-
-                        label = (
-                            section_names[i]
-                            if i < len(section_names)
-                            else f"セクション {i+1}"
+                    # 参考用のテンポ候補（倍・半分）を表示
+                    with st.expander("💡 テンポ（BPM）の微調整・確認用"):
+                        st.write(
+                            f"- **通常候補**: `{bpm:.1f}`\n"
+                            f"- **倍テンポ候補**: `{double_bpm:.1f}`\n"
+                            f"- **半テンポ候補**: `{half_bpm:.1f}`"
                         )
-
-                        with st.container():
-                            st.markdown(
-                                f"**📍 {label}** (`{start_time:.1f}秒 〜 {end_time:.1f}秒`)"
-                            )
-                            sc_col1, sc_col2 = st.columns(2)
-                            with sc_col1:
-                                st.metric(label="BPM", value=f"{chunk_bpm:.1f}")
-                            with sc_col2:
-                                st.metric(label="Key", value=chunk_key)
-                            st.markdown("---")
+                        st.caption(
+                            "楽曲のビートの刻み方（4つ打ち、倍テンポ感など）によって"
+                            "実際のノリと数値が乖離する場合は、こちらの候補も参考にしてください。"
+                        )
 
                 except Exception as e:
                     st.error(f"解析エラーが発生しました:\n`{e}`")
