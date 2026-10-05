@@ -73,27 +73,26 @@ if st.button("解析開始", type="primary"):
     with st.spinner("📥 音声をダウンロードして解析中..."):
       with tempfile.TemporaryDirectory() as temp_dir:
         try:
-          # ★★★ ここが yt-dlp オプション設定部分 (ydl_opts) です ★★★
-         ydl_opts = {
-    'format': 'bestaudio/best',
-    'outtmpl': os.path.join(temp_dir, '%(id)s.%(ext)s'),
-    # YouTubeのIPブロック回避設定
-    'username': 'oauth2',
-    'password': '',
-    'extractor_args': {
-        'youtube': {
-            'player_client': ['mweb', 'android', 'ios'],
-            'player_skip': ['js'],
-        }
-    },
-    'postprocessors': [{
-        'key': 'FFmpegExtractAudio',
-        'preferredcodec': 'wav',
-        'preferredquality': '192',
-    }],
-    'quiet': True,
-    'no_warnings': True,
-}
+          # --- YouTubeのIPブロックを回避するOAuth2＆マルチクライアント設定 ---
+          ydl_opts = {
+              "format": "bestaudio/best",
+              "outtmpl": os.path.join(temp_dir, "%(id)s.%(ext)s"),
+              "username": "oauth2",
+              "password": "",
+              "extractor_args": {
+                  "youtube": {
+                      "player_client": ["mweb", "android", "ios"],
+                      "player_skip": ["js"],
+                  }
+              },
+              "postprocessors": [{
+                  "key": "FFmpegExtractAudio",
+                  "preferredcodec": "wav",
+                  "preferredquality": "192",
+              }],
+              "quiet": True,
+              "no_warnings": True,
+          }
 
           with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
