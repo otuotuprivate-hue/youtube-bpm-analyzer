@@ -62,7 +62,6 @@ def estimate_key(y, sr):
 
 
 def clean_youtube_url(url):
-  # 余分なトラッキングパラメータ(?si=など)を削除して綺麗なURLにする
   url = re.sub(r"([&?]si=[^&]+)", "", url)
   return url.strip()
 
@@ -97,15 +96,10 @@ if st.button("解析開始", type="primary"):
             cookie_file.close()
             cookie_path = cookie_file.name
 
-          # iOSクライアントを指定することでフォーマット制限の回避を試みる
+          # --- フォーマット制限を無くし、最も汎用的な結合指定に変更 ---
           ydl_opts = {
-              "format": "bestaudio/best",
+              "format": "bv*+ba/b",
               "outtmpl": os.path.join(temp_dir, "%(id)s.%(ext)s"),
-              "extractor_args": {
-                  "youtube": {
-                      "player_client": ["ios"],
-                  }
-              },
               "postprocessors": [{
                   "key": "FFmpegExtractAudio",
                   "preferredcodec": "wav",
