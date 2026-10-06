@@ -32,6 +32,45 @@ NOTE_NAMES = [
 ]
 
 
+def time_to_seconds(time_str):
+  """「1:30」や「01:30.5」などの文字列を秒数（float）に変換する"""
+  time_str = time_str.strip()
+  if not time_str:
+    return 0.0
+
+  # そのまま数値（秒数）として入力された場合
+  try:
+    return float(time_str)
+  except ValueError:
+    pass
+
+  # 「分:秒」または「時間:分:秒」の形式をパース
+  parts = time_str.split(":")
+  if len(parts) == 2:
+    try:
+      minutes = float(parts[0])
+      seconds = float(parts[1])
+      return minutes * 60 + seconds
+    except ValueError as e:
+      raise ValueError(
+          "時間形式が正しくありません（例: 1:30 のように指定してください）"
+      ) from e
+  elif len(parts) == 3:
+    try:
+      hours = float(parts[0])
+      minutes = float(parts[1])
+      seconds = float(parts[2])
+      return hours * 3600 + minutes * 60 + seconds
+    except ValueError as e:
+      raise ValueError(
+          "時間形式が正しくありません（例: 1:02:30 のように指定してください）"
+      ) from e
+  else:
+    raise ValueError(
+        "時間形式が正しくありません（例: 1:30 のように指定してください）"
+    )
+
+
 def analyze_all_keys(y, sr):
   """全24キーの相関を計算し、確率（割合）を算出してランキング形式で返す"""
   chroma = librosa.feature.chroma_cqt(y=y, sr=sr, hop_length=512)
@@ -127,55 +166,70 @@ if uploaded_file is not None:
   full_range = st.checkbox(
       "曲の最後まで（フルで）解析する",
       value=True,
-      help="チェックを外すと、開始位置から指定した終了位置までの区間を解析します。",
+      help=(
+          "チェックを外すと、開始位置から指定した終了位置までの区間を解析します。"
+      ),
   )
 
   col_opt1, col_opt2 = st.columns(2)
   with col_opt1:
-    offset_sec = st.number_input(
-        "開始位置（秒）", min_value=0.0, value=0.0, step=1.0, format="%.1f"
+    offset_str = st.text_input(
+        "開始位置 (例: 0:00 または 30)",
+        value="0:00",
+        help="曲の読み込みを開始する位置を指定します。",
     )
 
-  end_sec = None
+  end_str = None
   if not full_range:
     with col_opt2:
-      end_sec = st.number_input(
-          "終了位置（秒）",
-          min_value=0.1,
-          value=90.0,
-          step=5.0,
-          format="%.1f",
+      end_str = st.text_input(
+          "終了位置 (例: 1:30 または 90)",
+          value="1:30",
+          help="曲の読み込みを終了する位置を指定します。",
       )
 
   if st.button("解析開始", type="primary"):
     with st.spinner("🎧 BPMと全キーの適合度を解析中..."):
       with tempfile.TemporaryDirectory() as temp_dir:
         try:
+          # 入力された時間文字列を秒数に変換
+          try:
+            offset_sec = time_to_seconds(offset_str)
+          except ValueError as ve:
+            st.error(f"開始位置の入力エラー: {ve}")
+            st.stop()
+
           audio_path = os.path.join(temp_dir, uploaded_file.name)
           with open(audio_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
 
           # フル解析か、区間指定かによって読み込み方を切り替え
-          if full_range or end_sec is None:
+          if full_range or not end_str:
             y, sr = librosa.load(
-                audio_path, sr=22050, offset=float(offset_sec), duration=None
+                audio_path, sr=22050, offset=offset_sec, duration=None
             )
-            range_desc = f"（解析範囲: {offset_sec}秒目から最後まで）"
+            range_desc = f"（解析範囲: {offset_str} から最後まで）"
           else:
+            try:
+              end_sec = time_to_seconds(end_str)
+            except ValueError as ve:
+              st.error(f"終了位置の入力エラー: {ve}")
+              st.stop()
+
             if end_sec <= offset_sec:
               st.error(
                   "エラー: 終了位置は開始位置より後の時間を指定してください。"
               )
               st.stop()
 
-            duration_sec = end_sec - float(offset_sec)
+            duration_sec = end_sec - offset_sec
             y, sr = librosa.load(
                 audio_path,
                 sr=22050,
-                offset=float(offset_sec),
+                offset=offset_sec,
                 duration=duration_sec,
             )
-            range_desc = f"（解析範囲: {offset_sec}秒目 〜 {end_sec}秒目）"
+            range_desc = f"（解析範囲: {offset_str} 〜 {end_str}）"
 
           bpm = estimate_overall_bpm(y, sr)
           key_rankings = analyze_all_keys(y, sr)
@@ -231,6 +285,10 @@ if uploaded_file is not None:
                 f"- **1.5倍補正候補**: `{bpm * 1.5:.1f}`\n"
                 f"- **倍テンポ候補**: `{double_bpm:.1f}`\n"
                 f"- **半テンポ候補**: `{half_bpm:.1f}`"
+            )
+
+        except Exception as e:
+          st.error(f"解析エラーが発生しました:\n`{e}`")
             )
 
         except Exception as e:
