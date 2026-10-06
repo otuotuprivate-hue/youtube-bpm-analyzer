@@ -122,24 +122,30 @@ uploaded_file = st.file_uploader(
 if uploaded_file is not None:
   st.audio(uploaded_file)
 
-  # --- 解析範囲の設定サイドバー / エリア ---
+  # --- 解析範囲の設定 ---
   st.markdown("### ⚙️ 解析範囲の設定")
+  full_range = st.checkbox(
+      "曲の最後まで（フルで）解析する",
+      value=True,
+      help="チェックを外すと、開始位置から指定した終了位置までの区間を解析します。",
+  )
+
   col_opt1, col_opt2 = st.columns(2)
   with col_opt1:
     offset_sec = st.number_input(
         "開始位置（秒）", min_value=0.0, value=0.0, step=1.0, format="%.1f"
     )
-  with col_opt2:
-    duration_sec = st.number_input(
-        "解析する長さ（秒）",
-        min_value=5.0,
-        value=90.0,
-        step=5.0,
-        format="%.1f",
-        help=(
-            "長すぎるとメモリを消費します。サビなど指定したい場合は長さを調整してください。"
-        ),
-    )
+
+  end_sec = None
+  if not full_range:
+    with col_opt2:
+      end_sec = st.number_input(
+          "終了位置（秒）",
+          min_value=0.1,
+          value=90.0,
+          step=5.0,
+          format="%.1f",
+      )
 
   if st.button("解析開始", type="primary"):
     with st.spinner("🎧 BPMと全キーの適合度を解析中..."):
@@ -149,13 +155,27 @@ if uploaded_file is not None:
           with open(audio_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
 
-          # 指定されたoffset（開始位置）とduration（長さ）で読み込む
-          y, sr = librosa.load(
-              audio_path,
-              sr=22050,
-              offset=float(offset_sec),
-              duration=float(duration_sec),
-          )
+          # フル解析か、区間指定かによって読み込み方を切り替え
+          if full_range or end_sec is None:
+            y, sr = librosa.load(
+                audio_path, sr=22050, offset=float(offset_sec), duration=None
+            )
+            range_desc = f"（解析範囲: {offset_sec}秒目から最後まで）"
+          else:
+            if end_sec <= offset_sec:
+              st.error(
+                  "エラー: 終了位置は開始位置より後の時間を指定してください。"
+              )
+              st.stop()
+
+            duration_sec = end_sec - float(offset_sec)
+            y, sr = librosa.load(
+                audio_path,
+                sr=22050,
+                offset=float(offset_sec),
+                duration=duration_sec,
+            )
+            range_desc = f"（解析範囲: {offset_sec}秒目 〜 {end_sec}秒目）"
 
           bpm = estimate_overall_bpm(y, sr)
           key_rankings = analyze_all_keys(y, sr)
@@ -166,9 +186,7 @@ if uploaded_file is not None:
 
           st.success("解析完了！")
           st.subheader(f"ファイル名: {uploaded_file.name}")
-          st.caption(
-              f"（解析範囲: {offset_sec}秒目から {duration_sec}秒間を抽出）"
-          )
+          st.caption(range_desc)
 
           col1, col2 = st.columns(2)
           with col1:
