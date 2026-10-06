@@ -38,13 +38,11 @@ def time_to_seconds(time_str):
   if not time_str:
     return 0.0
 
-  # そのまま数値（秒数）として入力された場合
   try:
     return float(time_str)
   except ValueError:
     pass
 
-  # 「分:秒」または「時間:分:秒」の形式をパース
   parts = time_str.split(":")
   if len(parts) == 2:
     try:
@@ -96,10 +94,8 @@ def analyze_all_keys(y, sr):
         "score": float(corr_min) if not np.isnan(corr_min) else 0.0,
     })
 
-  # スコア（相関係数）を降順ソート
   key_results = sorted(key_results, key=lambda x: x["score"], reverse=True)
 
-  # 正の相関値を抽出して割合（％）に正規化
   raw_scores = [max(0.0, item["score"]) for item in key_results]
   total_score = sum(raw_scores)
 
@@ -134,7 +130,6 @@ def estimate_overall_bpm(y, sr):
         else float(tempo_fallback)
     )
 
-  # 3連符や裏拍の誤認（約1.5倍ズレ）の自動補正
   if 112 <= bpm <= 122:
     corrected = bpm * 1.5
     if 165 <= corrected <= 185:
@@ -161,7 +156,6 @@ uploaded_file = st.file_uploader(
 if uploaded_file is not None:
   st.audio(uploaded_file)
 
-  # --- 解析範囲の設定 ---
   st.markdown("### ⚙️ 解析範囲の設定")
   full_range = st.checkbox(
       "曲の最後まで（フルで）解析する",
@@ -192,7 +186,6 @@ if uploaded_file is not None:
     with st.spinner("🎧 BPMと全キーの適合度を解析中..."):
       with tempfile.TemporaryDirectory() as temp_dir:
         try:
-          # 入力された時間文字列を秒数に変換
           try:
             offset_sec = time_to_seconds(offset_str)
           except ValueError as ve:
@@ -203,7 +196,6 @@ if uploaded_file is not None:
           with open(audio_path, "wb") as f:
             f.write(uploaded_file.getbuffer())
 
-          # フル解析か、区間指定かによって読み込み方を切り替え
           if full_range or not end_str:
             y, sr = librosa.load(
                 audio_path, sr=22050, offset=offset_sec, duration=None
@@ -227,69 +219,4 @@ if uploaded_file is not None:
                 audio_path,
                 sr=22050,
                 offset=offset_sec,
-                duration=duration_sec,
-            )
-            range_desc = f"（解析範囲: {offset_str} 〜 {end_str}）"
-
-          bpm = estimate_overall_bpm(y, sr)
-          key_rankings = analyze_all_keys(y, sr)
-          best_key = key_rankings[0]["key"]
-
-          double_bpm = round(bpm * 2, 1)
-          half_bpm = round(bpm / 2, 1)
-
-          st.success("解析完了！")
-          st.subheader(f"ファイル名: {uploaded_file.name}")
-          st.caption(range_desc)
-
-          col1, col2 = st.columns(2)
-          with col1:
-            st.metric(label="検出 BPM", value=f"{bpm:.1f}")
-          with col2:
-            st.metric(label="検出 Key（最有力）", value=best_key)
-
-          # 全キーの割合表示セクション
-          st.divider()
-          st.markdown("### 🎹 全24キーの適合割合（スコアランキング）")
-          st.write(
-              "楽曲のコード成分が各調（メジャー/マイナー）の理論プロファイルとどのくらい一致しているかの割合です。"
-          )
-
-          for rank, item in enumerate(key_rankings, 1):
-            k_name = item["key"]
-            prop = item["proportion"]
-            score = item["score"]
-
-            if rank == 1:
-              st.markdown(
-                  f"**🥇 1位: {k_name}** — 割合: **{prop:.1f}%** (相関スコア:"
-                  f" {score:.3f})"
-              )
-            elif rank <= 5:
-              st.markdown(
-                  f"🥈 {rank}位: {k_name} — 割合: {prop:.1f}% (スコア:"
-                  f" {score:.3f})"
-              )
-
-          # 6位以下をまとめて見られるセクション
-          with st.expander("📋 全24キーのスコア詳細をすべて見る"):
-            for rank, item in enumerate(key_rankings, 1):
-              st.text(
-                  f"{rank:2d}位: {item['key']} | 割合: {item['proportion']:5.1f}%"
-                  f" | スコア: {item['score']:.3f}"
-              )
-
-          with st.expander("💡 テンポ（BPM）の微調整用"):
-            st.write(
-                f"- **通常候補**: `{bpm:.1f}`\n"
-                f"- **1.5倍補正候補**: `{bpm * 1.5:.1f}`\n"
-                f"- **倍テンポ候補**: `{double_bpm:.1f}`\n"
-                f"- **半テンポ候補**: `{half_bpm:.1f}`"
-            )
-
-        except Exception as e:
-          st.error(f"解析エラーが発生しました:\n`{e}`")
-            )
-
-        except Exception as e:
-          st.error(f"解析エラーが発生しました:\n`{e}`")
+                duration=duration_sec
